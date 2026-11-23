@@ -977,7 +977,7 @@ def build_launch_command(game):
         command_parts.append(f"LOG_DIR='{gameid}'")
         command_parts.append(f"FAUGUSID={gameid}")
         if "GAMEID=" not in launch_arguments and runner != "Steam" and not disable_umu:
-            command_parts.append(f"GAMEID={umu_game_id(gameid)}")
+            command_parts.append(f"GAMEID={launch_umu_game_id(gameid, runner)}")
     if sdl_enabled:
         command_parts.append("PROTON_PREFER_SDL=1")
     if no_sleep:

@@ -10,6 +10,7 @@ import urllib.parse
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 
+from faugus import path_manager
 from faugus.path_manager import COMPATIBILITY_DIRS, COVERS_DIR, FAUGUS_LAUNCHER_STATE_DIR, GAMES_JSON, ICONS_DIR, PROTON_CACHYOS
 
 
@@ -22,6 +23,32 @@ def github_api_headers(url):
 
 def umu_game_id(gameid):
     return f"umu-faugus{zlib.crc32(gameid.encode()):08x}"
+
+
+EXE_WM_CLASS_MIN_VERSIONS = {"GE-Proton": (11, 13)}
+
+
+def proton_names_windows_by_exe(runner):
+    if not runner:
+        return False
+    folder = path_manager.find_compatibilitytool(runner)
+    if folder is None:
+        return False
+    try:
+        tokens = (folder / "version").read_text().split()
+    except OSError:
+        return False
+    if not tokens:
+        return False
+    match = re.fullmatch(r"(\D+)(\d+)-(\d+)", tokens[-1])
+    if not match or match.group(1) not in EXE_WM_CLASS_MIN_VERSIONS:
+        return False
+    version = (int(match.group(2)), int(match.group(3)))
+    return version >= EXE_WM_CLASS_MIN_VERSIONS[match.group(1)]
+
+
+def launch_umu_game_id(gameid, runner):
+    return "umu-default" if proton_names_windows_by_exe(runner) else umu_game_id(gameid)
 
 
 def game_wm_class(game):
