@@ -54,11 +54,22 @@ def launch_umu_game_id(gameid, runner):
 def game_wm_class(game):
     if game.get("runner") == "Steam":
         return None
-    match = re.search(r'(?:^|\s)GAMEID=["\']?(\S+?)["\']?(?:\s|$)', game.get("launch_arguments", "") or "")
-    umu_id = match.group(1) if match else umu_game_id(game.get("gameid", ""))
-    if re.fullmatch(r"umu-\w+", umu_id):
-        return f"steam_app_{umu_id[4:]}"
-    return "steam_app_0"
+    launch_arguments = game.get("launch_arguments", "") or ""
+    override = launch_argument(launch_arguments, "FAUGUS_WM_CLASS")
+    if override:
+        return override
+    runner = resolve_game_runner(game.get("runner", ""))
+    umu_id = launch_argument(launch_arguments, "GAMEID") or launch_umu_game_id(game.get("gameid", ""), runner)
+    app_id = umu_id[4:] if re.fullmatch(r"umu-\w+", umu_id) else "0"
+    if app_id in ("default", "0") and proton_names_windows_by_exe(runner):
+        exe = os.path.basename(expand_path(game.get("path", "") or "")).lower()
+        return exe if exe.endswith(".exe") else None
+    return f"steam_app_{app_id}"
+
+
+def launch_argument(launch_arguments, name):
+    match = re.search(rf'(?:^|\s){name}=["\']?(\S+?)["\']?(?:\s|$)', launch_arguments)
+    return match.group(1) if match else None
 
 
 def stop_request_path(gameid):

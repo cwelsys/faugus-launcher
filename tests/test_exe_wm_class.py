@@ -49,6 +49,46 @@ class ExeWmClassTests(unittest.TestCase):
         self.assertEqual(core.launch_umu_game_id("anything", "GE"), "umu-default")
         self.assertEqual(core.launch_umu_game_id("anything", "Old"), core.umu_game_id("anything"))
 
+    def wm(self, runner, path="/games/x/Game.exe", args="", gameid="g"):
+        return core.game_wm_class({"gameid": gameid, "runner": runner, "launch_arguments": args, "path": path})
+
+    def make_runners(self):
+        self.make_proton("GE", "GE-Proton11-14")
+        self.make_proton("Old", "GE-Proton11-12")
+
+    def test_supported_uses_exe_name(self):
+        self.make_runners()
+        self.assertEqual(self.wm("GE"), "game.exe")
+        self.assertEqual(self.wm("GE", path="~/games/x/Game.EXE"), "game.exe")
+        self.assertEqual(self.wm("GE", args="GAMEID=umu-default"), "game.exe")
+        self.assertEqual(self.wm("GE", args="GAMEID=0"), "game.exe")
+
+    def test_supported_non_exe_path_has_no_class(self):
+        self.make_runners()
+        for path in ["/games/x/setup.msi", "/games/x/run.bat", "/games/x/Game.lnk", ""]:
+            self.assertIsNone(self.wm("GE", path=path), path)
+
+    def test_explicit_steam_id_kept(self):
+        self.make_runners()
+        self.assertEqual(self.wm("GE", args="GAMEID=umu-12345"), "steam_app_12345")
+
+    def test_override(self):
+        self.make_runners()
+        self.assertEqual(self.wm("GE", args="X=1 FAUGUS_WM_CLASS=other.exe"), "other.exe")
+        self.assertEqual(self.wm("Old", args="FAUGUS_WM_CLASS=other.exe"), "other.exe")
+
+    def test_unsupported_unchanged(self):
+        self.make_runners()
+        self.assertEqual(self.wm("Old"), "steam_app_" + core.umu_game_id("g")[4:])
+        self.assertEqual(self.wm("Old", args="GAMEID=umu-default"), "steam_app_default")
+        self.assertEqual(self.wm("Old", args="GAMEID=0"), "steam_app_0")
+        self.assertIsNone(self.wm("Steam"))
+
+    def test_default_runner_resolved(self):
+        self.make_runners()
+        with mock.patch.object(core, "resolve_game_runner", lambda r: "GE" if r == "Default" else r):
+            self.assertEqual(self.wm("Default"), "game.exe")
+
 
 if __name__ == "__main__":
     unittest.main()

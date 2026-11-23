@@ -5498,7 +5498,7 @@ class Main(Gtk.ApplicationWindow, HiDpiMixin):
         game_directory = os.path.dirname(expand_path(game.path))
         desktop_file_content = build_desktop_file_content(
             game.title, f'--game {game.gameid}', new_icon_path, game_directory,
-            game_wm_class({"gameid": game.gameid, "runner": game.runner, "launch_arguments": game.launch_arguments})
+            game_wm_class({"gameid": game.gameid, "runner": game.runner, "launch_arguments": game.launch_arguments, "path": game.path})
         )
 
         os.makedirs(APP_DIR, exist_ok=True)
