@@ -88,6 +88,71 @@ class ExeWmClassTests(unittest.TestCase):
         self.make_runners()
         with mock.patch.object(core, "resolve_game_runner", lambda r: "GE" if r == "Default" else r):
             self.assertEqual(self.wm("Default"), "game.exe")
+    def write_shortcut(self, body):
+        apps = Path(self.tmp.name) / "applications"
+        apps.mkdir(exist_ok=True)
+        shortcut = apps / "g.desktop"
+        shortcut.write_text(body)
+        return apps, shortcut
+
+    def refresh(self, apps, runner="GE", path="/games/x/Game.exe"):
+        game = {"gameid": "g", "runner": runner, "launch_arguments": "", "path": path}
+        core.refresh_shortcut_wm_class(game, [apps])
+
+    def test_refresh_rewrites_stale_class(self):
+        self.make_runners()
+        apps, shortcut = self.write_shortcut("[Desktop Entry]\nName=G\nStartupWMClass=steam_app_faugusdeadbeef\nIcon=x\n")
+        self.refresh(apps)
+        self.assertEqual(shortcut.read_text(), "[Desktop Entry]\nName=G\nStartupWMClass=game.exe\nIcon=x\n")
+
+    def test_refresh_adds_missing_class(self):
+        self.make_runners()
+        apps, shortcut = self.write_shortcut("[Desktop Entry]\nName=G\n")
+        self.refresh(apps)
+        self.assertEqual(shortcut.read_text(), "[Desktop Entry]\nName=G\nStartupWMClass=game.exe\n")
+
+    def test_refresh_removes_class_when_unknown(self):
+        self.make_runners()
+        apps, shortcut = self.write_shortcut("[Desktop Entry]\nName=G\nStartupWMClass=steam_app_0\n")
+        self.refresh(apps, path="/games/x/setup.msi")
+        self.assertEqual(shortcut.read_text(), "[Desktop Entry]\nName=G\n")
+
+    def test_refresh_leaves_unsupported_and_missing_alone(self):
+        self.make_runners()
+        body = "[Desktop Entry]\nStartupWMClass=steam_app_" + core.umu_game_id("g")[4:] + "\n"
+        apps, shortcut = self.write_shortcut(body)
+        self.refresh(apps, runner="Old")
+        self.assertEqual(shortcut.read_text(), body)
+        empty = Path(self.tmp.name) / "empty"
+        empty.mkdir()
+        core.refresh_shortcut_wm_class({"gameid": "g", "runner": "GE", "path": "/games/x/Game.exe"}, [empty, None])
+        self.assertEqual(list(empty.iterdir()), [])
+
+    def test_unreadable_version_is_unsupported(self):
+        folder = Path(self.tmp.name) / "Bad"
+        folder.mkdir()
+        (folder / "version").write_bytes(b"\xff\xfeGE-Proton11-14")
+        self.assertFalse(core.proton_names_windows_by_exe("Bad"))
+
+    def test_launch_command_agrees_with_shortcut(self):
+        from faugus import runner
+        self.make_runners()
+        resolve = lambda r: "GE" if r == "Default" else r
+        cases = [
+            ("Default", "", "GAMEID=umu-default", "game.exe"),
+            ("GE", "", "GAMEID=umu-default", "game.exe"),
+            ("GE", "GAMEID=umu-12345", None, "steam_app_12345"),
+            ("Old", "", "GAMEID=" + core.umu_game_id("g"), "steam_app_" + core.umu_game_id("g")[4:]),
+        ]
+        with mock.patch.object(core, "resolve_game_runner", resolve), mock.patch.object(runner, "resolve_game_runner", resolve):
+            for runner_name, args, expected_arg, expected_class in cases:
+                game = {"gameid": "g", "runner": runner_name, "launch_arguments": args, "path": "/games/x/Game.exe", "prefix": "/p"}
+                command = runner.build_launch_command(game)
+                if expected_arg:
+                    self.assertIn(expected_arg, command.split(), runner_name)
+                else:
+                    self.assertNotIn("GAMEID=umu-default", command.split(), runner_name)
+                self.assertEqual(core.game_wm_class(game), expected_class, runner_name)
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ def proton_names_windows_by_exe(runner):
         return False
     try:
         tokens = (folder / "version").read_text().split()
-    except OSError:
+    except (OSError, ValueError):
         return False
     if not tokens:
         return False
@@ -70,6 +70,43 @@ def game_wm_class(game):
 def launch_argument(launch_arguments, name):
     match = re.search(rf'(?:^|\s){name}=["\']?(\S+?)["\']?(?:\s|$)', launch_arguments)
     return match.group(1) if match else None
+
+
+def refresh_shortcut_wm_class(game, shortcut_dirs=None):
+    gameid = game.get("gameid", "")
+    if not gameid:
+        return
+    if shortcut_dirs is None:
+        shortcut_dirs = [path_manager.APP_DIR, path_manager.DESKTOP_DIR]
+    wm_class = game_wm_class(game)
+    wanted = f"StartupWMClass={wm_class}" if wm_class else None
+    for shortcut_dir in shortcut_dirs:
+        if not shortcut_dir:
+            continue
+        shortcut = os.path.join(shortcut_dir, f"{gameid}.desktop")
+        try:
+            with open(shortcut, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        except (OSError, ValueError):
+            continue
+        updated = []
+        placed = False
+        for line in lines:
+            if line.startswith("StartupWMClass="):
+                if wanted and not placed:
+                    updated.append(wanted)
+                    placed = True
+                continue
+            updated.append(line)
+        if wanted and not placed:
+            updated.append(wanted)
+        if updated == lines:
+            continue
+        try:
+            with open(shortcut, "w", encoding="utf-8") as f:
+                f.write("\n".join(updated) + "\n")
+        except OSError:
+            continue
 
 
 def stop_request_path(gameid):

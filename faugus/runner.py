@@ -1096,6 +1096,7 @@ def main():
             return
 
         launch_options = build_launch_command(game)
+        refresh_shortcut_wm_class(game)
         FaugusRun(launch_options, None, game.get("pre_launch", ""), game.get("post_launch", ""), args.game, with_logs=args.logs, title=game.get("title", ""), exe=game.get("path", "")).run()
     else:
         FaugusRun(args.message, args.command, args.pre_launch, args.post_launch, with_logs=args.logs).run()
