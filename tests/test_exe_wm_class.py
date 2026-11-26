@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -13,6 +14,9 @@ class ExeWmClassTests(unittest.TestCase):
         patcher = mock.patch.object(path_manager, "COMPATIBILITY_DIRS", [Path(self.tmp.name)])
         patcher.start()
         self.addCleanup(patcher.stop)
+        self.window_id = mock.patch.object(core, "umu_supports_window_id", return_value=False)
+        self.window_id.start()
+        self.addCleanup(self.window_id.stop)
 
     def make_proton(self, name, version_text):
         folder = Path(self.tmp.name) / name
@@ -42,12 +46,6 @@ class ExeWmClassTests(unittest.TestCase):
         self.make_proton("NoVersion", None)
         self.assertFalse(core.proton_names_windows_by_exe("NoVersion"))
         self.assertFalse(core.proton_names_windows_by_exe(""))
-
-    def test_launch_umu_game_id(self):
-        self.make_proton("GE", "GE-Proton11-14")
-        self.make_proton("Old", "GE-Proton11-12")
-        self.assertEqual(core.launch_umu_game_id("anything", "GE"), "umu-default")
-        self.assertEqual(core.launch_umu_game_id("anything", "Old"), core.umu_game_id("anything"))
 
     def wm(self, runner, path="/games/x/Game.exe", args="", gameid="g"):
         return core.game_wm_class({"gameid": gameid, "runner": runner, "launch_arguments": args, "path": path})
@@ -79,7 +77,8 @@ class ExeWmClassTests(unittest.TestCase):
 
     def test_unsupported_unchanged(self):
         self.make_runners()
-        self.assertEqual(self.wm("Old"), "steam_app_" + core.umu_game_id("g")[4:])
+        self.assertEqual(self.wm("Old"), "steam_app_default")
+        self.assertEqual(self.wm("Old", args="GAMEID=umu-12345"), "steam_app_12345")
         self.assertEqual(self.wm("Old", args="GAMEID=umu-default"), "steam_app_default")
         self.assertEqual(self.wm("Old", args="GAMEID=0"), "steam_app_0")
         self.assertIsNone(self.wm("Steam"))
@@ -88,6 +87,34 @@ class ExeWmClassTests(unittest.TestCase):
         self.make_runners()
         with mock.patch.object(core, "resolve_game_runner", lambda r: "GE" if r == "Default" else r):
             self.assertEqual(self.wm("Default"), "game.exe")
+
+    def test_window_id_support_names_every_runner_by_window_id(self):
+        self.make_runners()
+        expected = "steam_app_" + core.umu_window_id("g")
+        with mock.patch.object(core, "umu_supports_window_id", return_value=True):
+            self.assertEqual(self.wm("GE"), expected)
+            self.assertEqual(self.wm("Old"), expected)
+            self.assertEqual(self.wm("GE", args="GAMEID=umu-12345"), expected)
+            self.assertEqual(self.wm("GE", args="FAUGUS_WM_CLASS=other.exe"), "other.exe")
+            self.assertIsNone(self.wm("Steam"))
+
+    def test_umu_window_id_detection(self):
+        self.window_id.stop()
+        root = Path(self.tmp.name)
+        for name, source, expected in [
+            ("new", b'os.environ.get("UMU_WINDOW_ID", "")', True),
+            ("old", b'os.environ.get("GAMEID", "")', False),
+        ]:
+            umu_run = root / name
+            with zipfile.ZipFile(umu_run, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("umu/umu_run.py", source)
+            self.assertEqual(core.umu_supports_window_id(umu_run), expected, name)
+        script = root / "script"
+        script.write_bytes(b"#!/bin/sh\nUMU_WINDOW_ID=1\n")
+        self.assertTrue(core.umu_supports_window_id(script))
+        self.assertFalse(core.umu_supports_window_id(root / "missing"))
+        self.window_id.start()
+
     def write_shortcut(self, body):
         apps = Path(self.tmp.name) / "applications"
         apps.mkdir(exist_ok=True)
@@ -119,7 +146,7 @@ class ExeWmClassTests(unittest.TestCase):
 
     def test_refresh_leaves_unsupported_and_missing_alone(self):
         self.make_runners()
-        body = "[Desktop Entry]\nStartupWMClass=steam_app_" + core.umu_game_id("g")[4:] + "\n"
+        body = "[Desktop Entry]\nStartupWMClass=steam_app_default\n"
         apps, shortcut = self.write_shortcut(body)
         self.refresh(apps, runner="Old")
         self.assertEqual(shortcut.read_text(), body)
@@ -139,19 +166,17 @@ class ExeWmClassTests(unittest.TestCase):
         self.make_runners()
         resolve = lambda r: "GE" if r == "Default" else r
         cases = [
-            ("Default", "", "GAMEID=umu-default", "game.exe"),
-            ("GE", "", "GAMEID=umu-default", "game.exe"),
-            ("GE", "GAMEID=umu-12345", None, "steam_app_12345"),
-            ("Old", "", "GAMEID=" + core.umu_game_id("g"), "steam_app_" + core.umu_game_id("g")[4:]),
+            ("Default", "", "game.exe"),
+            ("GE", "", "game.exe"),
+            ("GE", "GAMEID=umu-12345", "steam_app_12345"),
+            ("Old", "", "steam_app_default"),
         ]
         with mock.patch.object(core, "resolve_game_runner", resolve), mock.patch.object(runner, "resolve_game_runner", resolve):
-            for runner_name, args, expected_arg, expected_class in cases:
+            for runner_name, args, expected_class in cases:
                 game = {"gameid": "g", "runner": runner_name, "launch_arguments": args, "path": "/games/x/Game.exe", "prefix": "/p"}
-                command = runner.build_launch_command(game)
-                if expected_arg:
-                    self.assertIn(expected_arg, command.split(), runner_name)
-                else:
-                    self.assertNotIn("GAMEID=umu-default", command.split(), runner_name)
+                words = runner.build_launch_command(game).split()
+                self.assertIn("UMU_WINDOW_ID=" + core.umu_window_id("g"), words, runner_name)
+                self.assertFalse(any(w.startswith("GAMEID=") for w in words if w != args), runner_name)
                 self.assertEqual(core.game_wm_class(game), expected_class, runner_name)
 
 
