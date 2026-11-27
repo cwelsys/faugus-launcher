@@ -7,7 +7,6 @@ import signal
 import subprocess
 import tempfile
 import urllib.parse
-import zipfile
 import zlib
 from concurrent.futures import ThreadPoolExecutor
 
@@ -22,8 +21,8 @@ def github_api_headers(url):
     return {}
 
 
-def umu_window_id(gameid):
-    return f"faugus{zlib.crc32(gameid.encode()):08x}"
+def umu_game_id(gameid):
+    return f"umu-faugus{zlib.crc32(gameid.encode()):08x}"
 
 
 EXE_WM_CLASS_MIN_VERSIONS = {"GE-Proton": (11, 13)}
@@ -48,27 +47,8 @@ def proton_names_windows_by_exe(runner):
     return version >= EXE_WM_CLASS_MIN_VERSIONS[match.group(1)]
 
 
-def umu_supports_window_id(umu_run=None):
-    umu_run = str(umu_run or path_manager.UMU_RUN)
-    try:
-        stat = os.stat(umu_run)
-    except OSError:
-        return False
-    return _umu_run_reads_window_id(umu_run, stat.st_mtime_ns, stat.st_size)
-
-
-@functools.lru_cache(maxsize=4)
-def _umu_run_reads_window_id(umu_run, mtime_ns, size):
-    try:
-        with zipfile.ZipFile(umu_run) as archive:
-            source = archive.read("umu/umu_run.py")
-    except (OSError, KeyError, zipfile.BadZipFile):
-        try:
-            with open(umu_run, "rb") as f:
-                source = f.read()
-        except OSError:
-            return False
-    return b"UMU_WINDOW_ID" in source
+def launch_umu_game_id(gameid, runner):
+    return "umu-default" if proton_names_windows_by_exe(runner) else umu_game_id(gameid)
 
 
 def game_wm_class(game):
@@ -78,11 +58,10 @@ def game_wm_class(game):
     override = launch_argument(launch_arguments, "FAUGUS_WM_CLASS")
     if override:
         return override
-    if umu_supports_window_id():
-        return f"steam_app_{umu_window_id(game.get('gameid', ''))}"
-    umu_id = launch_argument(launch_arguments, "GAMEID") or "umu-default"
+    runner = resolve_game_runner(game.get("runner", ""))
+    umu_id = launch_argument(launch_arguments, "GAMEID") or launch_umu_game_id(game.get("gameid", ""), runner)
     app_id = umu_id[4:] if re.fullmatch(r"umu-\w+", umu_id) else "0"
-    if app_id in ("default", "0") and proton_names_windows_by_exe(resolve_game_runner(game.get("runner", ""))):
+    if app_id in ("default", "0") and proton_names_windows_by_exe(runner):
         exe = os.path.basename(expand_path(game.get("path", "") or "")).lower()
         return exe if exe.endswith(".exe") else None
     return f"steam_app_{app_id}"
